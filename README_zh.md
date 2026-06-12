@@ -38,7 +38,7 @@ TypeRelay 直接绕过剪贴板，通过**键盘通道模拟逐字符敲入**—
 
 ```bash
 # 克隆仓库
-git clone https://github.com/YSoEZ/typerelay.git
+git clone https://github.com/tuiangeuaoglea/typerelay.git
 cd typerelay
 
 # 安装依赖

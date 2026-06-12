@@ -39,7 +39,7 @@ TypeRelay bypasses the clipboard entirely. It **simulates actual keystrokes** th
 
 ```bash
 # Clone the repo
-git clone https://github.com/YSoEZ/typerelay.git
+git clone https://github.com/tuiangeuaoglea/typerelay.git
 cd typerelay
 
 # Install dependency
