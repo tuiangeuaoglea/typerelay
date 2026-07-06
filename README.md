@@ -20,15 +20,7 @@
 
 You're working inside a cloud desktop — **RDP**, **VMware Horizon**, **Citrix**, **AWS WorkSpaces** — and clipboard sharing is disabled by your IT policy.
 
-```
-┌──────────────────┐         ┌──────────────────────┐
-│    YOUR PC       │         │   REMOTE DESKTOP      │
-│                  │         │                       │
-│  📋 Copy text    │   🚫    │  Ctrl+V → (nothing)   │
-│                  │  ────→  │                       │
-│  (works fine)    │  BLOCK  │  (clipboard isolated)  │
-└──────────────────┘         └──────────────────────┘
-```
+![clipboard blocked on remote desktop](docs/problem.png)
 
 You end up **retyping everything by hand**. This is the daily reality for millions of people working on secured corporate environments.
 
@@ -38,17 +30,7 @@ You end up **retyping everything by hand**. This is the daily reality for millio
 
 TypeRelay bypasses the clipboard entirely. It **simulates real keystrokes** through the keyboard input channel — your remote desktop just sees someone typing.
 
-```
-┌──────────────────────┐         ┌──────────────────────┐
-│       YOUR PC        │         │   REMOTE DESKTOP      │
-│                      │         │                       │
-│  📋 Paste text   ═══╗│         │                       │
-│  ⏱  Countdown...   ║│         │                       │
-│  ⌨  Simulate keys  ║│  ═══════│══════▶  Text appears!  │
-│                      │  SCAN   │                       │
-│   "Shift+9" = `(`    │  CODES  │   "Who's typing?!"    │
-└──────────────────────┘         └──────────────────────┘
-```
+![TypeRelay keystroke simulation](docs/solution.png)
 
 ### The Key Trick: Shift-Combo Symbols
 
@@ -119,6 +101,8 @@ start "" pythonw typerelay.py
 ---
 
 ## How It Works
+
+![TypeRelay character processing flow](docs/how-it-works.png)
 
 | Character type | Method | Reliability |
 |:--|:--|:--|
