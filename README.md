@@ -53,23 +53,7 @@ python typerelay.py
 
 ## Usage
 
-```
-┌─────────────────────────────────────────┐
-│            TypeRelay                     │
-│  ┌───────────────────────────────────┐  │
-│  │  Paste your text here...           │  │
-│  │                                    │  │
-│  │                                    │  │
-│  └───────────────────────────────────┘  │
-│                                          │
-│  Countdown: [3] seconds                 │
-│                                          │
-│  ┌──────────────────────────────────┐   │
-│  │        ▶ START TYPING             │   │
-│  └──────────────────────────────────┘   │
-│  ☑ Always on top                        │
-└─────────────────────────────────────────┘
-```
+![TypeRelay application window](docs/screenshot.png)
 
 1. **Copy** text on your local machine
 2. **Paste** it into TypeRelay
