@@ -1,10 +1,10 @@
-# TypeRelay 2.1.2
+# TypeRelay 2.1.3
 
 Type text from your local computer into a remote desktop using simulated keystrokes. TypeRelay is a small Windows application with a Chinese Tkinter interface and explicit modes for commands and file editing.
 
 The simplified home screen uses a soft blue-purple gradient header and rounded cards, with settings at the top right.
 
-The larger Clear button returns the caret to the text editor, ready for Ctrl+V.
+The larger Clear button sits beside Start and returns the caret to the text editor, ready for Ctrl+V.
 
 The window stays on top while you switch targets. Slim, arrow-free scrollbars appear only when text overflows; Shift+mouse wheel scrolls horizontally. Rounded surfaces use antialiased PNG rendering at the current widget size. Windows DPI awareness is requested before creating the GUI, without changing system display settings or adding runtime dependencies.
 

@@ -1,4 +1,4 @@
-# TypeRelay 2.1.2 validation
+# TypeRelay 2.1.3 validation
 
 2026-10-21 · Windows · Python 3.12.14
 

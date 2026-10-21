@@ -177,7 +177,7 @@ def _send_char_safe(ch: str, checkpoint=lambda: None):
         keyboard.send('space' if ch == ' ' else _base_key(ch))
 
 
-VERSION = "2.1.2"
+VERSION = "2.1.3"
 COMMAND_MODE = "command"
 FILE_MODE = "file"
 
@@ -690,8 +690,6 @@ class App:
                                      style='Segment.TRadiobutton', command=self.update_mode, takefocus=True)
             button.pack(side='left', padx=(0, 4))
             self.mode_buttons.append(button)
-        self.clear_button = ttk.Button(editor_header, text='清空', width=6, command=self.clear, style='Clear.TButton')
-        self.clear_button.pack(side='right')
         self.stats_label = self._label(editor_header, size=9)
         self.stats_label.pack(side='right', padx=(8, 12))
 
@@ -728,6 +726,8 @@ class App:
                                       state='disabled', style='Stop.TButton')
         self.stop_button.grid(row=0, column=1, padx=(10, 0), sticky='ns')
         self.stop_button.grid_remove()
+        self.clear_button = ttk.Button(actions, text='清空', width=6, command=self.clear, style='Clear.TButton')
+        self.clear_button.grid(row=0, column=2, padx=(10, 0), sticky='ns')
 
         status_area = tk.Frame(page, bg=COLORS['bg'])
         status_area.grid(row=4, column=0, sticky='ew')
