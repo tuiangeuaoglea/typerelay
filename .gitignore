@@ -1,9 +1,5 @@
 __pycache__/
 *.py[cod]
-*.pyo
-*.egg-info/
-dist/
-build/
-.vscode/
-.idea/
-*.log
+.venv/
+.qa/
+output/

@@ -1,131 +1,75 @@
-```
-████████╗██╗   ██╗██████╗ ███████╗██████╗ ███████╗██╗      █████╗ ██╗   ██╗
-╚══██╔══╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗██╔════╝██║     ██╔══██╗╚██╗ ██╔╝
-   ██║    ╚████╔╝ ██████╔╝█████╗  ██████╔╝█████╗  ██║     ███████║ ╚████╔╝
-   ██║     ╚██╔╝  ██╔═══╝ ██╔══╝  ██╔══██╗██╔══╝  ██║     ██╔══██║  ╚██╔╝
-   ██║      ██║   ██║     ███████╗██║  ██║███████╗███████╗██║  ██║   ██║
-   ╚═╝      ╚═╝   ╚═╝     ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝   ╚═╝
-```
+# TypeRelay 2.1
 
-> **本地复制，远端敲入。** 绕过云桌面剪贴板隔离，把文字"打"进去。
+通过模拟按键，将本机文本输入到远程桌面。TypeRelay 是轻量的 Windows 桌面工具，采用中文 Tkinter 界面，明确区分指令输入和文件编辑。
 
-[![Python](https://img.shields.io/badge/python-3.8+-blue?logo=python&logoColor=white)](https://www.python.org)
-[![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows)](https://github.com/tuiangeuaoglea/typerelay)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Lines](https://img.shields.io/badge/lines-~300-lightgrey)](typerelay.py)
+简化后的首页采用柔和蓝紫渐变头部和圆角卡片，设置入口位于右上角。
 
----
+[English](README.md) · [MIT 许可证](LICENSE)
 
-## 痛点
+**新版界面截图与桌面验收待手动验证。** 远程转发受客户端、目标编辑器、键盘布局和输入法影响，请先在实际环境中用短文本验证。
 
-你在云桌面（**RDP / VMware Horizon / Citrix / 深信服 / AWS WorkSpaces**）里干活，剪贴板共享被 IT 策略禁用了。
+## 安装与运行
 
-![剪贴板被云桌面阻断](docs/problem.png)
+需要 **Windows、Python 3.8 或更新版本，以及 Tkinter**。唯一第三方运行依赖是 `keyboard==0.13.5`。
 
-只能**手动重新敲一遍**。这是几百万云桌面用户的日常。
-
----
-
-## 方案
-
-TypeRelay 直接绕过剪贴板，通过**键盘通道模拟逐字符敲入**——云桌面那边看到的就是一个真键盘在打字，不受任何剪贴板策略影响。
-
-![TypeRelay 通过扫描码通道打字](docs/solution.png)
-
-**关键技巧**：中文键盘的物理键位和 US 键盘一样，显式按 `Shift+9` 发出的扫描码，到云桌面那边就是 `(`——不受本地输入法影响，不会乱码。
-
----
-
-## 安装
-
-```bash
+```powershell
 git clone https://github.com/tuiangeuaoglea/typerelay.git
 cd typerelay
-pip install -r requirements.txt
-python typerelay.py
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe typerelay.py
 ```
-
-零配置，不要管理员权限，不装服务器。有 Python 就能跑。
-
----
 
 ## 使用
 
-![TypeRelay 应用窗口](docs/screenshot.png)
+1. 将文本粘贴到编辑区，选择 **指令**（包括 MobaXterm 指令）或 **文件**（文件编辑）。
+2. 需要调整时展开 **设置**，修改倒计时和逐字间隔。默认 **5 秒 / 50ms**，范围分别为 1–60 秒和 10–500ms。远程丢字时可将间隔调到 80–100ms。
+3. 将目标输入法切到英文 / 半角。编辑文件时，尽量关闭目标编辑器的自动缩进和自动补全。
+4. 点击 **开始输入 →** 后先进入倒计时，此时切到目标窗口并放好光标，并非点击后立即发送。倒计时结束时，TypeRelay 锁定当时的本机前台窗口。
+5. 输入期间保持目标窗口焦点。按 **Esc**、点击 **停止** 或切离目标窗口都会停止，之后不会自动续发；重试前先检查已输入的部分。
+6. 在目标内核对文本。指令模式由你确认后手动按回车；文件模式由你核对后保存文件。
 
-1. 本地 **Ctrl+C** 复制文字
-2. **粘贴**到 TypeRelay 文本框
-3. 设好**倒计时**秒数（默认 3 秒）
-4. 点 **Start Typing**
-5. **切到云桌面**，光标点到目标输入框
-6. 倒计时结束 → **自动逐字敲入！**
+| 模式 | 换行与空白 | 完成后 |
+| --- | --- | --- |
+| MobaXterm 指令（默认） | CRLF、CR、LF 均转为空格；每个 Tab 转为四个空格 | 不发送回车 |
+| 文件编辑 | 保留换行、空行、首尾空白和末尾换行 | 不自动保存文件 |
 
-### 桌面快捷方式
+大编辑区显示原文字符数和行数。切换模式不改写原文；每轮开始时冻结文本与设置。倒计时、输入进度、完成、停止和失败分别显示，停止按钮仅在运行期间出现。
 
-```batch
-@echo off
-cd /d C:\path\to\typerelay
-start "" pythonw typerelay.py
+**设置** 默认收起，包含倒计时和逐字间隔，底部显示当前数值的简短摘要。文件模式下还可操作：
+
+- **Tab 转为 4 个空格**：默认开启；关闭后发送真实 Tab。
+- **清除目标编辑器的自动缩进**：默认关闭，要求目标的 Shift+Home 能选到绝对行首。目标编辑器的 Home 行为不确定时，先在临时文件验证。
+
+收起设置会保留选项值；指令模式下这两个文件专用选项不可操作。
+
+## 行为与限制
+
+- ASCII 标点使用主键盘扫描码和明确的 Shift 组合；非 ASCII 字符使用 Windows Unicode `SendInput`，部分远程客户端不会转发这些事件。
+- 目标键盘布局、输入法、自动缩进、括号配对和自动补全均可能改变结果。程序不修改系统或远端输入法设置。
+- 焦点保护核对的是**本机前台根窗口的 HWND 与 PID**，不能识别同一个远程桌面窗口内切换远端程序或编辑区域。
+- 程序不保存输入历史、不上传输入文本、不自动读取剪贴板、不自动执行指令；不包含托盘模式或全局开始热键。
+- 进度表示已在本机发送的字符数，不代表远端已经接收并核对成功。
+
+## 测试与 Python API
+
+```powershell
+.\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
 ```
 
----
+离线测试将原生输入替换为 mock；测试通过不等于远程转发或目标编辑器已经验收。
 
-## 功能
+手动检查桌面界面时，在两个独立终端中分别启动本机测试窗口：
 
-| 功能 | 说明 |
-|:--|:--|
-| 🎯 **倒计时** | 给你时间切窗口、放光标 |
-| ⌨ **Shift 组合键** | `(){}[]!@#$` 显式按 Shift+基础键，绕过布局差异 |
-| ⚡ **速度可调** | 1~30 秒倒计时，字符间隔可配置 |
-| 📌 **窗口置顶** | 切云桌面时窗口始终在最前 |
-| 🪶 **极简** | ~300 行 Python，一个第三方依赖 |
+```powershell
+.\.venv\Scripts\python.exe tools/local_check.py relay
+.\.venv\Scripts\python.exe tools/local_check.py editor --mode file
+```
 
----
+relay 窗口预置合成示例。选择文件模式，将目标输入法切到英文 / 半角，开始倒计时后切到临时编辑器并点击其文本框。输入结束后点击核对按钮。编辑器仅将自己的文本框与预期示例比较，两个测试窗口均不连接内网。检查指令模式时，使用 `editor --mode command`，并在 relay 窗口选择指令模式。这些步骤用于后续手动验证，尚未记为桌面测试通过。
 
-## 原理
-
-| 字符类型 | 方式 | 可靠性 |
-|:--|:--|:--|
-| 英文/数字 | `keyboard.send()` | ✅ 始终可用 |
-| 符号 `(){}[]!@#$` | 显式 `Shift + 基础键` | ✅ 绕过键盘布局 |
-| 中文/Unicode | `SendInput(KEYEVENTF_UNICODE)` | ⚠️ RDP 可能丢弃 |
-
----
-
-## 同类对比
-
-| 工具 | 平台 | 方式 | 符号处理 | 维护状态 |
-|:--|:--|:--|:--|:--|
-| **TypeRelay** | Windows | 扫描码模拟 | ✅ Shift组合键 | ✅ |
-| `gonzobrains/RemoteTyper` | macOS | AppleScript | ❌ 不稳定 | ❌ |
-| `wfukuokaya/autotype` | macOS | CGEvent | ⚠️ 依赖布局 | ❌ |
-| `peak-flow/TypeBridge` | 浏览器 | Chrome 插件 | ⚠️ 仅网页RDP | ❌ |
-| AutoHotkey 脚本 | Windows | 宏脚本 | ⚠️ 需手动配 | N/A |
-
-**TypeRelay 是唯一专门为 Windows 云桌面剪贴板隔离场景设计的工具。**
-
----
-
-## 已知限制
-
-- **中文字符**在 RDP 下可能不生效（Unicode 注入被部分客户端丢弃）
-- **换行**自动替换为空格（防止意外触发回车）
-- **仅 Windows**（Unicode 注入依赖 `ctypes` Win32 API）
-
----
-
-## 路线图
-
-- [ ] 系统托盘模式
-- [ ] 全局热键 `Ctrl+Shift+V` 一键触发
-- [ ] 剪贴板监听（检测到复制即自动键入）
-- [ ] 跨平台（Linux `uinput` / macOS `CGEvent`）
-- [ ] 常用语片段库
-
-欢迎 PR！
-
----
+兼容已有的 `type_text(text)` 调用，默认使用指令模式。`TypingOptions`、`prepare_text()` 和 `type_text()` 支持明确的文件模式选项，以及可注入的检查点、等待、按键、字符与进度回调。倒计时和前台窗口保护由桌面应用管理；直接调用引擎时，如需保护，应由调用者提供检查点。
 
 ## 许可证
 
-MIT — 详见 [LICENSE](LICENSE)。
+MIT，详见 [LICENSE](LICENSE)。
