@@ -177,7 +177,7 @@ def _send_char_safe(ch: str, checkpoint=lambda: None):
         keyboard.send('space' if ch == ' ' else _base_key(ch))
 
 
-VERSION = "2.1.1"
+VERSION = "2.1.2"
 COMMAND_MODE = "command"
 FILE_MODE = "file"
 
@@ -607,8 +607,11 @@ class App:
         style.configure('Settings.TButton', padding=(14, 8), background='#F8F7FF',
                         borderwidth=0, bordercolor='#F8F7FF', foreground=COLORS['accent'])
         style.map('Settings.TButton', background=[('active', 'white'), ('disabled', '#ECEBF5')])
-        style.configure('Clear.TButton', padding=(8, 3), background='white', borderwidth=0,
-                        foreground=COLORS['muted'], font=('Microsoft YaHei UI', 9))
+        style.configure('Clear.TButton', padding=(16, 9), background=COLORS['soft'], borderwidth=0,
+                        foreground=COLORS['accent'], font=('Microsoft YaHei UI', 10, 'bold'))
+        style.map('Clear.TButton', background=[('disabled', '#F1F2F7'), ('pressed', '#DDD4FF'),
+                                               ('active', '#E7E0FF')],
+                  foreground=[('disabled', '#8C98AA'), ('!disabled', COLORS['accent'])])
         style.layout('Segment.TRadiobutton', style.layout('Toolbutton'))
         style.configure('Segment.TRadiobutton', padding=(16, 6), background='white',
                         foreground=COLORS['muted'], borderwidth=1, bordercolor='white',
@@ -687,7 +690,7 @@ class App:
                                      style='Segment.TRadiobutton', command=self.update_mode, takefocus=True)
             button.pack(side='left', padx=(0, 4))
             self.mode_buttons.append(button)
-        self.clear_button = ttk.Button(editor_header, text='清空', command=self.clear, style='Clear.TButton')
+        self.clear_button = ttk.Button(editor_header, text='清空', width=6, command=self.clear, style='Clear.TButton')
         self.clear_button.pack(side='right')
         self.stats_label = self._label(editor_header, size=9)
         self.stats_label.pack(side='right', padx=(8, 12))
@@ -967,8 +970,12 @@ class App:
 
     def clear(self):
         if not self.busy:
+            if self._stats_timer is not None:
+                self.root.after_cancel(self._stats_timer)
+                self._stats_timer = None
             self.text_area.delete('1.0', 'end')
             self.refresh_stats()
+            self.text_area.focus_set()
 
     def close(self):
         self.closing = True
