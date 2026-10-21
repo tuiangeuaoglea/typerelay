@@ -177,7 +177,7 @@ def _send_char_safe(ch: str, checkpoint=lambda: None):
         keyboard.send('space' if ch == ' ' else _base_key(ch))
 
 
-VERSION = "2.1.3"
+VERSION = "2.1.4"
 COMMAND_MODE = "command"
 FILE_MODE = "file"
 
@@ -379,9 +379,16 @@ def rounded_gradient_png(width, height, start, end, radius, border=None, border_
 
 
 def _draw_gradient(canvas, width, height, start, end, radius=18, border=None, border_width=1):
-    # Keep the PhotoImage referenced for as long as the canvas displays it.
-    canvas._surface_image = tk.PhotoImage(master=canvas, data=rounded_gradient_png(
-        width, height, start, end, radius, border, border_width))
+    # Retain a small per-widget photo cache, avoiding PNG decoding on each hover.
+    key = (width, height, start, end, radius, border, border_width)
+    cache = getattr(canvas, '_photo_cache', None)
+    if cache is None:
+        cache = canvas._photo_cache = {}
+    if key not in cache:
+        if len(cache) >= 8:
+            cache.pop(next(iter(cache)))
+        cache[key] = tk.PhotoImage(master=canvas, data=rounded_gradient_png(*key))
+    canvas._surface_image = cache[key]
     return canvas.create_image(0, 0, image=canvas._surface_image, anchor='nw', tags='paint')
 
 
@@ -403,6 +410,10 @@ class SlimScrollbar(tk.Canvas):
         self.first, self.last = 0.0, 1.0
         self.drag_offset = None
         self.hovered = False
+        self._shown = None
+        self._image_key = None
+        self._draw_key = None
+        self._thumb_item = None
         self.bind('<Configure>', self._draw)
         self.bind('<Enter>', lambda event: self._hover(True))
         self.bind('<Leave>', lambda event: self._hover(False))
@@ -417,12 +428,18 @@ class SlimScrollbar(tk.Canvas):
         return self.winfo_height() if self.orient == 'vertical' else self.winfo_width()
 
     def set(self, first, last):
+        previous = (self.first, self.last)
         self.first = max(0.0, min(1.0, float(first)))
         self.last = max(self.first, min(1.0, float(last)))
-        if self.last <= self.first or self.last - self.first >= 1 - 1e-6:
-            self.grid_remove()
-        else:
-            self.grid()
+        visible = self.last > self.first and self.last - self.first < 1 - 1e-6
+        changed = visible != getattr(self, '_shown', None)
+        if changed:
+            self._shown = visible
+            if visible:
+                self.grid()
+            else:
+                self.grid_remove()
+        if visible and (changed or previous != (self.first, self.last)):
             self._draw()
 
     def _hover(self, hovered):
@@ -430,16 +447,30 @@ class SlimScrollbar(tk.Canvas):
         self._draw()
 
     def _draw(self, event=None):
-        self.delete('all')
+        if self.last <= self.first or self.last - self.first >= 1 - 1e-6:
+            return
         position, length = scrollbar_geometry(self.first, self.last, self._length())
         if length <= 0:
             return
         color = '#9FA6C7' if self.hovered or self.drag_offset is not None else '#D1D5E6'
         thickness = 6 if self.hovered or self.drag_offset is not None else 4
         width, height = (thickness, max(1, round(length))) if self.orient == 'vertical' else (max(1, round(length)), thickness)
-        self._surface_image = tk.PhotoImage(master=self, data=rounded_gradient_png(width, height, color, color, thickness / 2))
         x, y = (2, round(position)) if self.orient == 'vertical' else (round(position), 2)
-        self.create_image(x, y, image=self._surface_image, anchor='nw')
+        image_key = (width, height, color)
+        draw_key = (image_key, x, y)
+        if draw_key == self._draw_key:
+            return
+        self._draw_key = draw_key
+        if image_key != self._image_key:
+            self._image_key = image_key
+            self._surface_image = tk.PhotoImage(master=self, data=rounded_gradient_png(
+                width, height, color, color, thickness / 2))
+            if self._thumb_item is not None:
+                self.itemconfigure(self._thumb_item, image=self._surface_image)
+        if self._thumb_item is None:
+            self._thumb_item = self.create_image(x, y, image=self._surface_image, anchor='nw')
+        else:
+            self.coords(self._thumb_item, x, y)
 
     def _press(self, event):
         position, length = scrollbar_geometry(self.first, self.last, self._length())
@@ -469,10 +500,12 @@ class SlimScrollbar(tk.Canvas):
 
 class GradientButton(tk.Canvas):
     """Keyboard-accessible native-Tk action button with focus and disabled states."""
-    def __init__(self, parent, text, command):
-        super().__init__(parent, height=50, width=180, highlightthickness=0,
+    def __init__(self, parent, text, command, *, variant='primary', width=180):
+        super().__init__(parent, height=50, width=width, highlightthickness=0,
                          borderwidth=0, bg=COLORS['bg'], takefocus=True, cursor='hand2')
         self.caption, self.command = text, command
+        self.variant = variant
+        self._visual_key = None
         self.hovered = False
         self.pressed = False
         self.focused = False
@@ -517,16 +550,30 @@ class GradientButton(tk.Canvas):
         return 'break'
 
     def _draw(self, event=None):
-        self.delete('all')
         width, height = self.winfo_width(), self.winfo_height()
         disabled = self.cget('state') == 'disabled'
-        colors = ('#DCD9F0', '#DAE1F3') if disabled else (
-            ('#5B4BC8', '#3969D8') if self.pressed else
-            ('#8371F7', '#578DF9') if self.hovered else ('#7562EC', '#487FF0'))
-        _draw_gradient(self, width, height, *colors, radius=15,
-                       border='#FFFFFF' if self.focused and not disabled else None, border_width=2)
-        self.create_text(width / 2, height / 2, text=self.caption, fill='#8B87A6' if disabled else 'white',
-                         font=('Microsoft YaHei UI', 11, 'bold'))
+        variant = getattr(self, 'variant', 'primary')
+        key = (width, height, disabled, self.pressed, self.hovered, self.focused, variant)
+        if width <= 1 or height <= 1 or key == getattr(self, '_visual_key', None):
+            return
+        self._visual_key = key
+        self.delete('all')
+        if variant == 'secondary':
+            colors = ('#EDECF5', '#EDF0F8') if disabled else (
+                ('#E0D8FA', '#D8E5FB') if self.pressed else
+                ('#E8E1FF', '#DFEAFF') if self.hovered else ('#F0EBFF', '#E9F0FF'))
+            foreground = '#9A94AB' if disabled else COLORS['accent']
+            radius, focus_color, font_size = height / 2, COLORS['accent'], 10
+        else:
+            colors = ('#DCD9F0', '#DAE1F3') if disabled else (
+                ('#5B4BC8', '#3969D8') if self.pressed else
+                ('#8371F7', '#578DF9') if self.hovered else ('#7562EC', '#487FF0'))
+            foreground = '#8B87A6' if disabled else 'white'
+            radius, focus_color, font_size = 15, '#FFFFFF', 11
+        _draw_gradient(self, width, height, *colors, radius=radius,
+                       border=focus_color if self.focused and not disabled else None, border_width=2)
+        self.create_text(width / 2, height / 2, text=self.caption, fill=foreground,
+                         font=('Microsoft YaHei UI', font_size, 'bold'))
 
 
 class EditorCard(tk.Canvas):
@@ -537,6 +584,10 @@ class EditorCard(tk.Canvas):
         self.bind('<Configure>', self._resize)
 
     def _resize(self, event):
+        size = (event.width, event.height)
+        if size == getattr(self, '_card_size', None):
+            return
+        self._card_size = size
         self.delete('paint')
         _draw_gradient(self, event.width, event.height, '#FFFFFF', '#FFFFFF',
                        radius=22, border=COLORS['border'])
@@ -565,6 +616,8 @@ class App:
         self.advanced_open = False
         self.poll_timer = None
         self._stats_timer = None
+        self._paste_timer = None
+        self._paste_was_empty = False
         self.mode = tk.StringVar(value=COMMAND_MODE)
         self.expand_tabs = tk.BooleanVar(value=True)
         self.autoindent = tk.BooleanVar(value=False)
@@ -607,11 +660,6 @@ class App:
         style.configure('Settings.TButton', padding=(14, 8), background='#F8F7FF',
                         borderwidth=0, bordercolor='#F8F7FF', foreground=COLORS['accent'])
         style.map('Settings.TButton', background=[('active', 'white'), ('disabled', '#ECEBF5')])
-        style.configure('Clear.TButton', padding=(16, 9), background=COLORS['soft'], borderwidth=0,
-                        foreground=COLORS['accent'], font=('Microsoft YaHei UI', 10, 'bold'))
-        style.map('Clear.TButton', background=[('disabled', '#F1F2F7'), ('pressed', '#DDD4FF'),
-                                               ('active', '#E7E0FF')],
-                  foreground=[('disabled', '#8C98AA'), ('!disabled', COLORS['accent'])])
         style.layout('Segment.TRadiobutton', style.layout('Toolbutton'))
         style.configure('Segment.TRadiobutton', padding=(16, 6), background='white',
                         foreground=COLORS['muted'], borderwidth=1, bordercolor='white',
@@ -697,6 +745,9 @@ class App:
         text_frame.grid(row=1, column=0, sticky='nsew')
         text_frame.columnconfigure(0, weight=1)
         text_frame.rowconfigure(0, weight=1)
+        # Keep the viewport stable when a scrollbar appears after a large paste.
+        text_frame.columnconfigure(1, minsize=10)
+        text_frame.rowconfigure(1, minsize=10)
         self.text_area = tk.Text(text_frame, font=('Consolas', 12), wrap='none', undo=True,
                                  bg='white', fg=COLORS['ink'], insertbackground=COLORS['accent'],
                                  selectbackground='#E8E3FF', selectforeground=COLORS['ink'],
@@ -710,9 +761,10 @@ class App:
         horizontal.grid(row=1, column=0, sticky='ew')
         self.text_area.config(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
         self.empty_hint = self._label(self.text_area, '粘贴你想输入的内容…', size=12,
-                                      color='#A0A4BA', anchor='nw')
+                                      color='#A0A4BA', anchor='nw', borderwidth=0, padx=0, pady=0)
         self.empty_hint.bind('<Button-1>', lambda _: self.text_area.focus_set())
         self.text_area.bind('<<Modified>>', self._on_text_modified)
+        self.text_area.bind('<<Paste>>', self._before_paste)
         self.text_area.bind('<Shift-MouseWheel>', self._scroll_horizontal)
         self.mode_hint = self._label(editor, size=9, anchor='w', justify='left', wraplength=650)
         self.mode_hint.grid(row=2, column=0, sticky='w', pady=(8, 0))
@@ -726,7 +778,7 @@ class App:
                                       state='disabled', style='Stop.TButton')
         self.stop_button.grid(row=0, column=1, padx=(10, 0), sticky='ns')
         self.stop_button.grid_remove()
-        self.clear_button = ttk.Button(actions, text='清空', width=6, command=self.clear, style='Clear.TButton')
+        self.clear_button = GradientButton(actions, text='清空', command=self.clear, variant='secondary', width=104)
         self.clear_button.grid(row=0, column=2, padx=(10, 0), sticky='ns')
 
         status_area = tk.Frame(page, bg=COLORS['bg'])
@@ -773,9 +825,37 @@ class App:
     def _on_text_modified(self, event=None):
         if self.text_area.edit_modified():
             self.text_area.edit_modified(False)
+            self.empty_hint.place_forget()
             if self._stats_timer is not None:
                 self.root.after_cancel(self._stats_timer)
             self._stats_timer = self.root.after(60, self.refresh_stats)
+
+    def _cancel_paste_refresh(self):
+        if getattr(self, '_paste_timer', None) is not None:
+            self.root.after_cancel(self._paste_timer)
+            self._paste_timer = None
+
+    def _before_paste(self, event=None):
+        if self.busy or self.closing:
+            return 'break'
+        self.empty_hint.place_forget()
+        self._paste_was_empty = self.text_area.compare('end-1c', '==', '1.0')
+        self._cancel_paste_refresh()
+        self._paste_timer = self.root.after_idle(self._finish_paste)
+        # Let Tk's class binding perform its normal single paste and undo grouping.
+        return None
+
+    def _finish_paste(self):
+        self._paste_timer = None
+        if self.closing or self.busy:
+            return
+        if self._stats_timer is not None:
+            self.root.after_cancel(self._stats_timer)
+            self._stats_timer = None
+        self.refresh_stats()
+        if self._paste_was_empty and self.mode.get() == COMMAND_MODE:
+            self.text_area.xview_moveto(0)
+            self.text_area.yview_moveto(0)
 
     def _scroll_horizontal(self, event):
         if event.delta:
@@ -791,7 +871,7 @@ class App:
         if text:
             self.empty_hint.place_forget()
         else:
-            self.empty_hint.place(x=16, y=11)
+            self.empty_hint.place(x=9, y=9)
         if not self.busy:
             self.update_progress(0, 0)
             self.set_state('ready', '开始输入后，切到目标窗口。' if text
@@ -836,10 +916,13 @@ class App:
 
     def update_mode(self):
         file_mode = self.mode.get() == FILE_MODE
+        wrap = 'none' if file_mode else 'word'
+        if not self.busy and self.text_area.cget('wrap') != wrap:
+            self.text_area.config(wrap=wrap)
         self.mode_hint.config(text=(
             '保留换行与缩进。请先关闭目标自动缩进、自动补全。'
             if file_mode else
-            '换行转为空格 · 不发送回车，输入后由你核对并执行。'))
+            '长指令自动折行显示 · 换行转为空格，不发送回车。'))
         for control in (self.tabs_check, self.indent_check):
             control.config(state=tk.NORMAL if file_mode and not self.busy else tk.DISABLED)
 
@@ -885,6 +968,7 @@ class App:
         if self._stats_timer is not None:
             self.root.after_cancel(self._stats_timer)
             self._stats_timer = None
+        self._cancel_paste_refresh()
         self.update_progress(0, len(prepared))
         self.set_busy(True)
         self.countdown(seconds, prepared, options)
@@ -970,6 +1054,7 @@ class App:
 
     def clear(self):
         if not self.busy:
+            self._cancel_paste_refresh()
             if self._stats_timer is not None:
                 self.root.after_cancel(self._stats_timer)
                 self._stats_timer = None
@@ -980,7 +1065,7 @@ class App:
     def close(self):
         self.closing = True
         self.cancel.set()
-        for timer in (self.timer, self.poll_timer, self._stats_timer):
+        for timer in (self.timer, self.poll_timer, self._stats_timer, getattr(self, '_paste_timer', None)):
             if timer is not None:
                 self.root.after_cancel(timer)
         self.root.destroy()

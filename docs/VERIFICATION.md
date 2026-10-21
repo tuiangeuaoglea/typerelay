@@ -1,4 +1,4 @@
-# TypeRelay 2.1.3 validation
+# TypeRelay 2.1.4 validation
 
 2026-10-21 · Windows · Python 3.12.14
 
@@ -10,6 +10,8 @@
 - Antialiased rounded gradients use cached RGBA PNG images displayed by Tk Canvas. PNG dimensions, checksums, partial-alpha corner edges, gradients, borders and tiny/odd-sized surfaces are tested without a GUI. The runtime dependency remains `keyboard==0.13.5`.
 - Window setup defaults to always-on-top without raising or forcing focus. DPI setup precedes creation of an owned Tk root, preserves host-selected awareness, and has tested Windows API fallbacks.
 - Slim scrollbars hide when the view fits, restore on overflow, support both drag directions and track paging, and never call focus APIs. Shift+mouse wheel scrolls the editor horizontally.
+- Repeated scrollbar ranges no longer trigger repeated layout/redraw; moving a thumb reuses its image. Button background images are cached per widget, and the secondary Clear action uses an antialiased pill shape.
+- The paste hook does not read the clipboard or insert/delete text itself: Tk's normal class binding still performs the paste once. The hook hides the placeholder immediately, refreshes statistics after insertion, and anchors only a fresh command paste to the beginning. Command wrapping changes display only; file mode keeps unwrapped lines.
 
 Run:
 
@@ -28,5 +30,6 @@ The current interface has **not** been visually accepted. No screenshot of the r
 5. Test `relay --size 780x600 --scale 100`, then `--scale 125` and `--scale 150`, including `--settings`. This adjusts only the test process's Tk font scaling; it does not change Windows display settings. Check actual system DPI separately if needed.
 6. Cancel during countdown; finish countdown without switching targets; press Esc or change foreground windows mid-run. Confirm zero-send or partial-stop behavior as applicable, and no automatic resume. Close while waiting and while sending.
 7. Save screenshots of the actual accepted windows. Verify the intended remote client/editor separately with a short temporary sample before operational use.
+8. Paste a short command, a long single-line command, and a large multiline sample. Check text and whitespace match the clipboard; test selection replacement, Ctrl+Z/Ctrl+Y, repeated pastes, and paste after Clear. Confirm existing-text insertion does not reset the viewport, command wrapping adds no real newlines, placeholder text does not overlap input, and scrollbar visibility does not move the text area. Check Clear hover/focus/disabled appearance.
 
 The sample checker reports only match status and character counts. It does not save or upload the input text.
