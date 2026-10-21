@@ -19,6 +19,7 @@ SAMPLE = (
 
 
 def make_root(args):
+    typerelay.configure_dpi_awareness()
     root = tk.Tk()
     if args.scale is not None:
         # Changes only this test process, never the Windows display settings.
@@ -29,7 +30,7 @@ def make_root(args):
 def relay(args):
     root = make_root(args)
     app = typerelay.App(root=root)
-    app.root.title('TypeRelay 2.1 — 本机样例')
+    app.root.title('TypeRelay ' + typerelay.VERSION + ' — 本机样例')
     app.root.geometry(args.size)
     app.mode.set(args.mode)
     app.update_mode()

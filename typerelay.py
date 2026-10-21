@@ -25,6 +25,9 @@ import threading
 import os
 import queue
 import math
+import struct
+import zlib
+from functools import lru_cache
 from dataclasses import dataclass
 import tkinter as tk
 from tkinter import ttk
@@ -174,7 +177,7 @@ def _send_char_safe(ch: str, checkpoint=lambda: None):
         keyboard.send('space' if ch == ' ' else _base_key(ch))
 
 
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 COMMAND_MODE = "command"
 FILE_MODE = "file"
 
@@ -292,25 +295,176 @@ STATE_LABELS = {
 }
 
 
-def _rounded_shape(canvas, x1, y1, x2, y2, radius, **options):
-    points = (x1 + radius, y1, x2 - radius, y1, x2, y1, x2, y1 + radius,
-              x2, y2 - radius, x2, y2, x2 - radius, y2, x1 + radius, y2,
-              x1, y2, x1, y2 - radius, x1, y1 + radius, x1, y1)
-    return canvas.create_polygon(points, smooth=True, splinesteps=24, **options)
+def configure_dpi_awareness():
+    """Opt in before creating Tk; retain awareness chosen by the host/manifest."""
+    if sys.platform != 'win32':
+        return False
+    try:
+        user32 = ctypes.WinDLL('user32', use_last_error=True)
+        try:
+            modern = user32.SetProcessDpiAwarenessContext
+            modern.argtypes = (ctypes.c_void_p,)
+            modern.restype = wintypes.BOOL
+            if modern(ctypes.c_void_p(-4)):
+                return True
+            if ctypes.get_last_error() == 5:  # The host has already selected awareness.
+                return False
+        except AttributeError:
+            pass
+        try:
+            shcore = ctypes.WinDLL('shcore', use_last_error=True)
+            per_monitor = shcore.SetProcessDpiAwareness
+            per_monitor.argtypes = (ctypes.c_int,)
+            per_monitor.restype = ctypes.c_long
+            result = per_monitor(2)
+            if result == 0:
+                return True
+            if result in (-2147024891, 0x80070005):
+                return False
+        except (AttributeError, OSError):
+            pass
+        legacy = user32.SetProcessDPIAware
+        legacy.argtypes = ()
+        legacy.restype = wintypes.BOOL
+        return bool(legacy())
+    except (AttributeError, OSError):
+        return False
 
 
-def _draw_gradient(canvas, width, height, start, end, radius=18):
-    """Draw a rounded horizontal gradient with native Tk, no bitmap dependency."""
+def _round_coverage(x, y, width, height, radius, inset=0):
+    """One-pixel analytic antialiasing of a rounded rectangle's signed distance."""
+    half_width, half_height = width / 2 - inset, height / 2 - inset
+    if half_width <= 0 or half_height <= 0:
+        return 0.0
+    radius = max(0, min(radius - inset, half_width, half_height))
+    qx = abs(x + 0.5 - width / 2) - (half_width - radius)
+    qy = abs(y + 0.5 - height / 2) - (half_height - radius)
+    distance = math.hypot(max(qx, 0), max(qy, 0)) + min(max(qx, qy), 0) - radius
+    return max(0.0, min(1.0, 0.5 - distance))
+
+
+@lru_cache(maxsize=24)
+def rounded_gradient_png(width, height, start, end, radius, border=None, border_width=1):
+    """RGBA PNG at the widget's pixel size, with antialiased edges and no add-ons."""
+    width, height = max(1, int(width)), max(1, int(height))
+    radius = max(0, min(radius, width / 2, height / 2))
     first = tuple(int(start[i:i + 2], 16) for i in (1, 3, 5))
     last = tuple(int(end[i:i + 2], 16) for i in (1, 3, 5))
-    radius = min(radius, width / 2, height / 2)
-    for x in range(0, max(1, width), 2):
-        ratio = x / max(1, width - 1)
-        color = '#' + ''.join(f'{round(a + (b - a) * ratio):02x}' for a, b in zip(first, last))
-        edge = min(x, max(0, width - x - 2))
-        inset = radius - math.sqrt(max(0, radius ** 2 - (radius - edge) ** 2)) if edge < radius else 0
-        canvas.create_rectangle(x, inset, min(x + 2, width), height - inset,
-                                fill=color, outline='', tags='paint')
+    border_rgb = tuple(int(border[i:i + 2], 16) for i in (1, 3, 5)) if border else None
+    pixels = [tuple(round(a + (b - a) * x / max(1, width - 1)) for a, b in zip(first, last))
+              for x in range(width)]
+
+    def row(y):
+        data = bytearray(b'\x00')  # PNG filter: None.
+        for x, rgb in enumerate(pixels):
+            outer = _round_coverage(x, y, width, height, radius)
+            if border_rgb and outer:
+                inner = _round_coverage(x, y, width, height, radius, inset=border_width)
+                ratio = min(1.0, inner / outer)
+                rgb = tuple(round(b + (c - b) * ratio) for b, c in zip(border_rgb, rgb))
+            data.extend((*rgb, round(outer * 255)))
+        return bytes(data)
+
+    # Only corner rows differ; reuse the straight middle instead of rerendering it.
+    edge_rows = min(math.ceil(max(radius, border_width if border else 0)), height // 2)
+    top = [row(y) for y in range(edge_rows)]
+    center_height = height - edge_rows * 2
+    raw = b''.join(top) + (row(edge_rows) * center_height if center_height else b'') + b''.join(reversed(top))
+
+    def chunk(kind, data):
+        return struct.pack('!I', len(data)) + kind + data + struct.pack('!I', zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('!IIBBBBB', width, height, 8, 6, 0, 0, 0))
+            + chunk(b'IDAT', zlib.compress(raw, 3)) + chunk(b'IEND', b''))
+
+
+def _draw_gradient(canvas, width, height, start, end, radius=18, border=None, border_width=1):
+    # Keep the PhotoImage referenced for as long as the canvas displays it.
+    canvas._surface_image = tk.PhotoImage(master=canvas, data=rounded_gradient_png(
+        width, height, start, end, radius, border, border_width))
+    return canvas.create_image(0, 0, image=canvas._surface_image, anchor='nw', tags='paint')
+
+
+def scrollbar_geometry(first, last, track_length, min_thumb=24):
+    track_length = max(0, track_length)
+    span = max(0.0, min(1.0, last - first))
+    length = min(track_length, max(min_thumb, span * track_length))
+    position = max(0.0, min(1.0, first / (1 - span))) if span < 1 else 0
+    return position * (track_length - length), length
+
+
+class SlimScrollbar(tk.Canvas):
+    """Arrow-free scrollbar; appears only when the associated view overflows."""
+    def __init__(self, parent, orient, command):
+        options = {'width': 10, 'height': 1} if orient == 'vertical' else {'height': 10, 'width': 1}
+        super().__init__(parent, bg='white', highlightthickness=0, borderwidth=0,
+                         takefocus=False, cursor='arrow', **options)
+        self.orient, self.command = orient, command
+        self.first, self.last = 0.0, 1.0
+        self.drag_offset = None
+        self.hovered = False
+        self.bind('<Configure>', self._draw)
+        self.bind('<Enter>', lambda event: self._hover(True))
+        self.bind('<Leave>', lambda event: self._hover(False))
+        self.bind('<ButtonPress-1>', self._press)
+        self.bind('<B1-Motion>', self._drag)
+        self.bind('<ButtonRelease-1>', self._release)
+
+    def _axis(self, event):
+        return event.y if self.orient == 'vertical' else event.x
+
+    def _length(self):
+        return self.winfo_height() if self.orient == 'vertical' else self.winfo_width()
+
+    def set(self, first, last):
+        self.first = max(0.0, min(1.0, float(first)))
+        self.last = max(self.first, min(1.0, float(last)))
+        if self.last <= self.first or self.last - self.first >= 1 - 1e-6:
+            self.grid_remove()
+        else:
+            self.grid()
+            self._draw()
+
+    def _hover(self, hovered):
+        self.hovered = hovered
+        self._draw()
+
+    def _draw(self, event=None):
+        self.delete('all')
+        position, length = scrollbar_geometry(self.first, self.last, self._length())
+        if length <= 0:
+            return
+        color = '#9FA6C7' if self.hovered or self.drag_offset is not None else '#D1D5E6'
+        thickness = 6 if self.hovered or self.drag_offset is not None else 4
+        width, height = (thickness, max(1, round(length))) if self.orient == 'vertical' else (max(1, round(length)), thickness)
+        self._surface_image = tk.PhotoImage(master=self, data=rounded_gradient_png(width, height, color, color, thickness / 2))
+        x, y = (2, round(position)) if self.orient == 'vertical' else (round(position), 2)
+        self.create_image(x, y, image=self._surface_image, anchor='nw')
+
+    def _press(self, event):
+        position, length = scrollbar_geometry(self.first, self.last, self._length())
+        axis = self._axis(event)
+        if position <= axis <= position + length:
+            self.drag_offset = axis - position
+        else:
+            self.drag_offset = None
+            self.command('scroll', -1 if axis < position else 1, 'pages')
+        self._draw()
+
+    def _drag(self, event):
+        if self.drag_offset is None:
+            return
+        _, length = scrollbar_geometry(self.first, self.last, self._length())
+        travel = self._length() - length
+        if travel <= 0:
+            return
+        span = self.last - self.first
+        fraction = max(0.0, min(1 - span, (self._axis(event) - self.drag_offset) / travel * (1 - span)))
+        self.command('moveto', fraction)
+
+    def _release(self, event):
+        self.drag_offset = None
+        self._draw()
 
 
 class GradientButton(tk.Canvas):
@@ -369,10 +523,8 @@ class GradientButton(tk.Canvas):
         colors = ('#DCD9F0', '#DAE1F3') if disabled else (
             ('#5B4BC8', '#3969D8') if self.pressed else
             ('#8371F7', '#578DF9') if self.hovered else ('#7562EC', '#487FF0'))
-        _draw_gradient(self, width, height, *colors, radius=15)
-        if self.focused and not disabled:
-            _rounded_shape(self, 3, 3, width - 3, height - 3, 12,
-                           fill='', outline='white', width=2)
+        _draw_gradient(self, width, height, *colors, radius=15,
+                       border='#FFFFFF' if self.focused and not disabled else None, border_width=2)
         self.create_text(width / 2, height / 2, text=self.caption, fill='#8B87A6' if disabled else 'white',
                          font=('Microsoft YaHei UI', 11, 'bold'))
 
@@ -385,17 +537,20 @@ class EditorCard(tk.Canvas):
         self.bind('<Configure>', self._resize)
 
     def _resize(self, event):
-        self.delete('outline')
-        _rounded_shape(self, 1, 1, event.width - 1, event.height - 1, 22,
-                       fill='white', outline=COLORS['border'], tags='outline')
-        self.tag_lower('outline')
+        self.delete('paint')
+        _draw_gradient(self, event.width, event.height, '#FFFFFF', '#FFFFFF',
+                       radius=22, border=COLORS['border'])
+        self.tag_lower('paint')
         self.itemconfigure(self.body, width=max(1, event.width - 28), height=max(1, event.height - 24))
 
 
 class App:
     def __init__(self, root=None):
+        if root is None:
+            configure_dpi_awareness()
         self.root = root if root is not None else tk.Tk()
         self.root.title(f"TypeRelay {VERSION}")
+        self.root.attributes('-topmost', True)
         self.root.geometry('960x720')
         self.root.minsize(780, 600)
         self.events = queue.Queue()
@@ -469,8 +624,6 @@ class App:
         style.configure('TCheckbutton', focuscolor=COLORS['accent'])
         style.configure('Horizontal.TProgressbar', thickness=5, borderwidth=0,
                         troughcolor='#E4EAF3', background=COLORS['accent'])
-        style.configure('TScrollbar', arrowsize=12, borderwidth=0, background='#D5DDEA',
-                        troughcolor='#F6F8FC')
         for state, (_, color) in STATE_LABELS.items():
             style.configure(state + '.TLabel', foreground=color, background=COLORS['bg'],
                             font=('Microsoft YaHei UI', 10, 'bold'))
@@ -550,15 +703,16 @@ class App:
                                  highlightthickness=1, highlightcolor=COLORS['accent'],
                                  highlightbackground='white', height=1, width=1)
         self.text_area.grid(row=0, column=0, sticky='nsew')
-        vertical = ttk.Scrollbar(text_frame, orient='vertical', command=self.text_area.yview)
+        vertical = SlimScrollbar(text_frame, orient='vertical', command=self.text_area.yview)
         vertical.grid(row=0, column=1, sticky='ns')
-        horizontal = ttk.Scrollbar(text_frame, orient='horizontal', command=self.text_area.xview)
+        horizontal = SlimScrollbar(text_frame, orient='horizontal', command=self.text_area.xview)
         horizontal.grid(row=1, column=0, sticky='ew')
         self.text_area.config(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
         self.empty_hint = self._label(self.text_area, '粘贴你想输入的内容…', size=12,
                                       color='#A0A4BA', anchor='nw')
         self.empty_hint.bind('<Button-1>', lambda _: self.text_area.focus_set())
         self.text_area.bind('<<Modified>>', self._on_text_modified)
+        self.text_area.bind('<Shift-MouseWheel>', self._scroll_horizontal)
         self.mode_hint = self._label(editor, size=9, anchor='w', justify='left', wraplength=650)
         self.mode_hint.grid(row=2, column=0, sticky='w', pady=(8, 0))
 
@@ -619,6 +773,12 @@ class App:
             if self._stats_timer is not None:
                 self.root.after_cancel(self._stats_timer)
             self._stats_timer = self.root.after(60, self.refresh_stats)
+
+    def _scroll_horizontal(self, event):
+        if event.delta:
+            steps = max(1, abs(int(event.delta / 120)))
+            self.text_area.xview_scroll(-steps if event.delta > 0 else steps, 'units')
+        return 'break'
 
     def refresh_stats(self, event=None):
         self._stats_timer = None
